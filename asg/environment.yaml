@@ -1,0 +1,28 @@
+parameters:
+  image: ubuntu-jammy
+  flavor: m1.small
+  key_name: mykey
+  subnet: private-subnet
+  security_groups: ["web-secgroup"]
+  user_data: |
+    #!/bin/bash -v
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get -y install apache2 stress
+    (hostname; echo; ip a) > /var/www/html/index.html
+    systemctl start apache2
+  metric_granularity: 300
+  # Example with 2 vCPUs and granularity of 300 seconds:
+  # Threshold = Percentage_in_Decimal * 2 * 1,000,000,000 * 300
+  # 1   * 2 * 1000000000 * 300 = 600000000000
+  # 0.9 * 2 * 1000000000 * 300 = 540000000000.0
+  # 0.8 * 2 * 1000000000 * 300 = 480000000000.0
+  # 0.7 * 2 * 1000000000 * 300 = 420000000000.0
+  # 0.6 * 2 * 1000000000 * 300 = 360000000000.0
+  # 0.5 * 2 * 1000000000 * 300 = 300000000000.0
+  # 0.4 * 2 * 1000000000 * 300 = 240000000000.0
+  # 0.3 * 2 * 1000000000 * 300 = 180000000000.0
+  # 0.2 * 2 * 1000000000 * 300 = 120000000000.0
+  # 0.1 * 2 * 1000000000 * 300 =  60000000000.0
+  cpu_threshold_high: 480000000000.0
+  cpu_threshold_low:  120000000000.0
+  #lb_pool: <my_lb_pool_uuid>

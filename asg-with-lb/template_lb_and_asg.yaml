@@ -1,0 +1,343 @@
+heat_template_version: 2021-04-16
+description: >
+  Example of a stack to create an Auto Scaling Group (ASG) and a Load Balancer.
+  As new instances are created or deleted from the ASG, they are automatically
+  added to or removed from the Load Balancer.
+parameters:
+  image:
+    type: string
+    description: The ID or name of the image to boot with
+  flavor:
+    type: string
+    description: The ID or name of the flavor to boot onto
+  key_name:
+    type: string
+    description: Name of keypair to inject into the server
+  subnet:
+    type: string
+    description: Subnet name or ID of the servers
+  security_groups:
+    type: comma_delimited_list
+    description: List of security group names or IDs
+  tags:
+    type: comma_delimited_list
+    description: Tags from the server
+    default: []
+  user_data:
+    type: string
+    description: Instance user data
+  desired_capacity:
+    type: number
+    description: Desired initial number of resources
+    default: 1
+  min_size:
+    type: number
+    description: Minimum number of resources in the group
+    default: 1
+  max_size:
+    type: number
+    description: Maximum number of resources in the group
+    default: 6
+  rolling_updates_max_batch_size:
+    type: number
+    description: The maximum number of resources to replace at once for this scaling group
+    default: 1
+  rolling_updates_min_in_service:
+    type: number
+    description: The minimum number of resources in service while rolling updates are being executed for this scaling group
+    default: 1
+  rolling_updates_pause_time:
+    type: number
+    description: The number of seconds to wait between batches of updates for this scaling group
+    default: 0
+  cooldown:
+    type: number
+    description: Cooldown period, in seconds
+    default: 600
+  evaluation_periods:
+    type: number
+    description: Number of periods to evaluate over
+    default: 3
+  metric_name:
+    type: string
+    description: Metric name watched by the alarm. If empty it does no automatic scaling.
+    default: "cpu"
+  metric_aggregation_method:
+    type: string
+    description: The aggregation method to compare to the threshold.
+    default: rate:mean
+  metric_granularity:
+    type: number
+    description: The time range in seconds.
+    default: 300
+  cpu_metric_threshold_high:
+    type: number
+    description: CPU Threshold to evaluate against to scale up
+  cpu_metric_threshold_low:
+    type: number
+    description: CPU Threshold to evaluate against to scale down
+  lb_vip_subnet:
+    type: string
+    description: The name or ID of the subnet on which to allocate the VIP address
+  lb_listener_protocol:
+    type: string
+    description: The protocol - can either be TCP, HTTP, HTTPS, TERMINATED_HTTPS, PROXY or UDP
+    default: HTTP
+  lb_listener_protocol_port:
+    type: string
+    description: The port on which to listen for client traffic
+    default: 80
+  lb_listener_connection_limit:
+    type: string
+    description: The maximum number of connections allowed for the Listener
+    default: -1
+  lb_listener_allowed_cidrs:
+    type: comma_delimited_list
+    description: A list of CIDR blocks that are permitted to connect to this listener, denying all other source addresses. If not present, defaults to allow all.
+    default: []
+  lb_listener_default_tls_container_ref:
+    type: string
+    description: A reference to a Barbican Secrets container which stores TLS information. This is required if the protocol is TERMINATED_HTTPS
+    default: ""
+  lb_listener_sni_container_refs:
+    type: comma_delimited_list
+    description: A list of references to Barbican Secrets containers which store SNI information
+    default: []
+  lb_pool_algorithm:
+    type: string
+    description: The load balancing algorithm to distribute traffic to the pool's members. Must be one of ROUND_ROBIN, LEAST_CONNECTIONS, or SOURCE_IP
+    default: ROUND_ROBIN
+  lb_pool_protocol:
+    type: string
+    description: The protocol of the pool - can either be TCP, HTTP, HTTPS, PROXY, TERMINATED_HTTPS or UDP
+    default: HTTP
+  lb_pool_tls_enabled:
+    type: boolean
+    description: Enable backend member re-encryption.
+    default: false
+  lb_healthmonitor_type:
+    type: string
+    description: One of predefined health monitor types - can either be PING, TCP, HTTP, HTTPS, UDP-CONNECT
+    default: HTTP
+  lb_healthmonitor_http_method:
+    type: string
+    description: The HTTP method used for requests by the monitor of type HTTP.
+    default: GET
+  lb_healthmonitor_url_path:
+    type: string
+    description: URI path that will be accessed if monitor type is HTTP or HTTPS
+    default: /
+  lb_healthmonitor_expected_codes:
+    type: string
+    description: The HTTP status codes expected in response from the member to declare it healthy. can either specify a single status like 200, or a range like 200-202
+    default: 200
+  lb_healthmonitor_delay:
+    type: number
+    description: The time, in seconds, between sending probes to members
+    default: 10
+  lb_healthmonitor_max_retries:
+    type: number
+    description: Number of permissible connection failures before changing the member status to INACTIVE.
+    default: 5
+  lb_healthmonitor_timeout:
+    type: number
+    description:  Maximum number of seconds for a monitor to wait for a connection to be established before it times out.
+    default: 5
+
+resources:
+  asg:
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      cooldown: {get_param: cooldown}
+      desired_capacity: {get_param: desired_capacity}
+      max_size: {get_param: max_size}
+      min_size: {get_param: min_size}
+      rolling_updates:
+        max_batch_size: {get_param: rolling_updates_max_batch_size}
+        min_in_service: {get_param: rolling_updates_min_in_service}
+        pause_time: {get_param: rolling_updates_pause_time}
+      resource:
+        type: template_instance.yaml
+        properties:
+          flavor: {get_param: flavor}
+          image: {get_param: image}
+          key_name: {get_param: key_name}
+          security_groups: {get_param: security_groups}
+          subnet: {get_param: subnet}
+          user_data: {get_param: user_data}
+          metadata: {"metering.server_group": {get_param: "OS::stack_id"},
+                     "stack_id": {get_param: "OS::stack_id"},
+                     "stack_name": {get_param: "OS::stack_name"}}
+          lb_pool: {get_resource: lb_pool}
+
+  scale_up_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: asg}
+      cooldown: {get_param: cooldown}
+      scaling_adjustment: 1
+
+  scale_down_policy:
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: { get_resource: asg}
+      cooldown: {get_param: cooldown}
+      scaling_adjustment: -1
+
+  alarm_high:
+    type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+    properties:
+      description: Scale up if metric > threshold_high
+      metric: {get_param: metric_name}
+      aggregation_method: {get_param: metric_aggregation_method}
+      granularity: {get_param: metric_granularity}
+      evaluation_periods: {get_param: evaluation_periods}
+      threshold: {get_param: cpu_metric_threshold_high}
+      resource_type: instance
+      comparison_operator: gt
+      alarm_actions:
+        - str_replace:
+            template: trust+url
+            params:
+              url: {get_attr: [scale_up_policy, signal_url]}
+      query:
+        str_replace:
+          template: '{"=": {"server_group": "stack_id"}}'
+          params:
+            stack_id: {get_param: "OS::stack_id"}
+
+  alarm_low:
+    type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+    properties:
+      description: Scale down if metric < threshold_low
+      metric: {get_param: metric_name}
+      aggregation_method: {get_param: metric_aggregation_method}
+      granularity: {get_param: metric_granularity}
+      evaluation_periods: {get_param: evaluation_periods}
+      threshold: {get_param: cpu_metric_threshold_low}
+      resource_type: instance
+      comparison_operator: lt
+      alarm_actions:
+        - str_replace:
+            template: trust+url
+            params:
+              url: {get_attr: [scale_down_policy, signal_url]}
+      query:
+        str_replace:
+          template: '{"=": {"server_group": "stack_id"}}'
+          params:
+            stack_id: {get_param: "OS::stack_id"}
+
+  lb:
+    type: OS::Octavia::LoadBalancer
+    properties:
+      vip_subnet: {get_param: lb_vip_subnet}
+      description:
+        str_replace:
+          template: |
+            stack_name $stack_name - stack_id $stack_id
+          params:
+            $stack_id: {get_param: "OS::stack_id"}
+            $stack_name: {get_param: "OS::stack_name"}
+
+  lb_listener:
+    type: OS::Octavia::Listener
+    properties:
+      loadbalancer: {get_resource: lb}
+      protocol: {get_param: lb_listener_protocol}
+      protocol_port: {get_param: lb_listener_protocol_port}
+      connection_limit: {get_param: lb_listener_connection_limit}
+      allowed_cidrs: {get_param: lb_listener_allowed_cidrs}
+      default_tls_container_ref: {get_param: lb_listener_default_tls_container_ref}
+      sni_container_refs: {get_param: lb_listener_sni_container_refs}
+
+  lb_pool:
+    type: OS::Octavia::Pool
+    properties:
+      listener: {get_resource: lb_listener}
+      lb_algorithm: {get_param: lb_pool_algorithm}
+      protocol: {get_param: lb_pool_protocol}
+      tls_enabled: {get_param: lb_pool_tls_enabled}
+
+  lb_healthmonitor:
+    type: OS::Octavia::HealthMonitor
+    properties:
+      pool: { get_resource: lb_pool }
+      type: {get_param: lb_healthmonitor_type}
+      http_method: {get_param: lb_healthmonitor_http_method}
+      url_path: {get_param: lb_healthmonitor_url_path}
+      expected_codes: {get_param: lb_healthmonitor_expected_codes}
+      delay: {get_param: lb_healthmonitor_delay}
+      max_retries: {get_param: lb_healthmonitor_max_retries}
+      timeout: {get_param: lb_healthmonitor_timeout}
+
+outputs:
+  scale_up_url:
+    description: This URL is the webhook to scale up the autoscaling group.
+    value: {get_attr: [scale_up_policy, alarm_url]}
+
+  scale_down_url:
+    description: This URL is the webhook to scale down the autoscaling group.
+    value: {get_attr: [scale_down_policy, alarm_url]}
+
+  asg_size:
+    description: This is the current size of the auto scaling group.
+    value: {get_attr: [asg, current_size]}
+
+  lb_vip:
+    description: The IP address of the load balancer.
+    value: {get_attr: [lb, vip_address]}
+
+  lb_member_ip:
+    description: This is a list of server IP members of this load balancer.
+    value: {get_attr: [asg, outputs_list, server_ip]}
+
+  lb_member:
+    description: Load balancer member details.
+    value: {get_attr: [asg, outputs_list, lb_member]}
+
+  metric_query:
+    description: This query retrieves statistics for CPU usage measurements.
+    value:
+      str_replace:
+        params:
+          stackval:
+            get_param: OS::stack_id
+        template: 'openstack metric aggregates --resource-type instance --sort-column
+          timestamp ''(metric cpu rate:mean)'' server_group=stackval'
+
+  metric_query_pct:
+    description: >
+      This is a query for statistics on the CPU usage measurements, with the values
+      calculated as percentages. It is just an example with a flavor with 2 vCPUs.
+      Please update it to match your configuration.
+    value:
+      str_replace:
+        params:
+          stackval:
+            get_param: OS::stack_id
+          metric_granularity:
+            get_param: metric_granularity
+        template: 'openstack metric aggregates --resource-type instance --sort-column
+          timestamp ''(/ (* (/ (/ (metric cpu rate:mean) 1000000000) metric_granularity) 100) 2)''
+          server_group=stackval'
+
+  metric_agg_query_pct:
+    description: >
+      This query retrieves the CPU usage statistics in percentage, aggregated
+      across all instances.
+      It is just an example with a flavor with 2 vCPUs.
+      Please update number '2' to match your flavor configuration.
+    value:
+      str_replace:
+        params:
+          stackval:
+            get_param: OS::stack_id
+          metric_granularity:
+            get_param: metric_granularity
+        template: 'openstack metric aggregates --resource-type instance
+          --sort-column timestamp
+          ''(aggregate mean (/ (* (/ (/ (metric cpu rate:mean) 1000000000) metric_granularity) 100) 2)))''
+          server_group=stackval'
